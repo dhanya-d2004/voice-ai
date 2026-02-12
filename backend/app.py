@@ -8,11 +8,11 @@ import json
 import io
 import tempfile
 import subprocess
-import wave
+import numpy as np
 import requests
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, WebSocket, WebSocketDisconnect, Request, Form
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -54,7 +54,7 @@ AUDIO_OUT_DIR = BASE_DIR / "audio/output"
 AUDIO_IN_DIR.mkdir(parents=True, exist_ok=True)
 AUDIO_OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-OLLAMA_URL = "http://localhost:11434/api/chat"
+OLLAMA_URL = "http://l3.111.150.23:11434/api/chat"
 OLLAMA_MODEL = "llama3"
 
 PIPER_BIN = "/home/ubuntu/piper/piper"
@@ -310,7 +310,44 @@ def get_audio(
         media_type="audio/wav",
         filename=filename
     )
+@app.post("/process-voice")
+async def process_voice(request: Request):
+    # Headers for session tracking
+    user_id = request.headers.get("X-User-ID", "default_user")
+    conversation_id = request.headers.get("X-Conversation-ID", "default_conv")
+    
+    memory = ShaktiMemory(user_id, conversation_id)
 
+    # Receive raw audio from local computer
+    raw_audio = await request.body()
+    audio_data = np.frombuffer(raw_audio, dtype=np.float32)
+
+    # 1. STT (Whisper)
+    segments, _ = whisper.transcribe(audio_data)
+    user_text = " ".join(seg.text for seg in segments).strip()
+    
+    if not user_text:
+        return {"error": "No speech detected"}
+
+    memory.add("user", user_text)
+
+    # 2. LLM (Ollama)
+    messages = [{"role": "system", "content": "You are a brief voice assistant."}]
+    for role, content in memory.get_recent():
+        messages.append({"role": role, "content": content})
+    
+    reply = ask_ollama(messages)
+    memory.add("assistant", reply)
+
+    # 3. TTS (Piper)
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        subprocess.run(
+            [PIPER_BIN, "--model", PIPER_MODEL, "--output_file", tmp.name],
+            input=reply,
+            text=True
+        )
+        
+        return StreamingResponse(open(tmp.name, "rb"), media_type="audio/wav")
 @app.get("/health")
 def health():
     return {"status": "ok"}
