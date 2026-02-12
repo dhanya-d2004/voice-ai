@@ -112,10 +112,17 @@ class SignupRequest(BaseModel):
 
     @field_validator("username")
     @classmethod
-    def normalize_username(cls, v: str) -> str:
+    def username_not_empty(cls, v: str) -> str:
         v = v.strip().lower()
         if not v:
             raise ValueError("Username cannot be empty")
+        return v
+
+    @field_validator("password")
+    @classmethod
+    def password_not_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("Password cannot be empty")
         return v
 
 
@@ -166,15 +173,12 @@ def extract_text_from_document(file: UploadFile) -> str:
 # =========================
 from fastapi import HTTPException, status
 
-@app.post("/signup", status_code=status.HTTP_201_CREATED)
+@app.post("/signup", status_code=201)
 def signup(req: SignupRequest, db: Session = Depends(get_db)):
-    existing = db.query(User).filter(User.username == req.username).first()
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Username already exists"
-        )
+    if db.query(User).filter(User.username == req.username).first():
+        raise HTTPException(409, "Username already exists")
 
+    # This WILL now always execute
     validate_password_strength(req.password)
 
     user = User(
