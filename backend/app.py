@@ -104,7 +104,22 @@ def speak(text: str, output_file: Path):
 # =========================
 # Request Schemas
 # =========================
+from pydantic import BaseModel, Field, field_validator
+
 class SignupRequest(BaseModel):
+    username: str = Field(..., min_length=3, max_length=50)
+    password: str = Field(..., min_length=8, max_length=128)
+
+    @field_validator("username")
+    @classmethod
+    def normalize_username(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not v:
+            raise ValueError("Username cannot be empty")
+        return v
+
+
+class LoginRequest(BaseModel):
     username: str
     password: str
 
@@ -149,11 +164,16 @@ def extract_text_from_document(file: UploadFile) -> str:
 # =========================
 # Auth Endpoints
 # =========================
-@app.post("/signup")
+from fastapi import HTTPException, status
+
+@app.post("/signup", status_code=status.HTTP_201_CREATED)
 def signup(req: SignupRequest, db: Session = Depends(get_db)):
     existing = db.query(User).filter(User.username == req.username).first()
     if existing:
-        raise HTTPException(400, "User already exists")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Username already exists"
+        )
 
     validate_password_strength(req.password)
 
@@ -164,22 +184,20 @@ def signup(req: SignupRequest, db: Session = Depends(get_db)):
 
     db.add(user)
     db.commit()
+    db.refresh(user)
 
     return {"message": "Signup successful"}
 
 @app.post("/login")
-def login(
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: Session = Depends(get_db)
-):
-    user = db.query(User).filter(
-        User.username == form_data.username
-    ).first()
+def login(req: LoginRequest, db: Session = Depends(get_db)):
+    username = req.username.strip().lower()
 
-    if not user or not verify_password(form_data.password, user.password_hash):
+    user = db.query(User).filter(User.username == username).first()
+
+    if not user or not verify_password(req.password, user.password_hash):
         raise HTTPException(
-            status_code=401,
-            detail="Invalid credentials",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
