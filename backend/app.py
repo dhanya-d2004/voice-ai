@@ -23,10 +23,11 @@ from backend.auth.password import hash_password, verify_password
 from backend.auth.jwt import create_access_token, get_current_user
 from backend.database import get_db, engine, Base
 from backend.models.user import User
-
 from faster_whisper import WhisperModel
 from pypdf import PdfReader
 from docx import Document
+from backend.auth.security import validate_password_strength
+from backend.auth.password import hash_password
 
 from app.memory import ShaktiMemory
 
@@ -154,6 +155,8 @@ def signup(req: SignupRequest, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(400, "User already exists")
 
+    validate_password_strength(req.password)
+
     user = User(
         username=req.username,
         password_hash=hash_password(req.password)
@@ -165,25 +168,30 @@ def signup(req: SignupRequest, db: Session = Depends(get_db)):
     return {"message": "Signup successful"}
 
 @app.post("/login")
-async def login(request: Request, db: Session = Depends(get_db)):
-    body = await request.json()
-    username = body.get("username")
-    password = body.get("password")
+def login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(
+        User.username == form_data.username
+    ).first()
 
-    if not username or not password:
-        raise HTTPException(400, "Username and password required")
+    if not user or not verify_password(form_data.password, user.password_hash):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
-    user = db.query(User).filter(User.username == username).first()
-
-    if not user or not verify_password(password, user.password_hash):
-        raise HTTPException(401, "Invalid credentials")
-
-    token = create_access_token({"sub": user.username})
+    access_token = create_access_token(
+        data={"sub": user.username}
+    )
 
     return {
-        "access_token": token,
+        "access_token": access_token,
         "token_type": "bearer"
     }
+
 
 # =========================
 # TEXT CHAT
