@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Voice AI</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div class="chat-container">
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <h2>Voice AI</h2>
+    <button onclick="logout()">Logout</button>
+  </div>
+
+  <!-- Chat area -->
+  <div class="chat-main">
+    <div id="messages" class="messages"></div>
+
+    <!-- Input bar -->
+    <div class="input-bar">
+      <input type="file" id="audioInput" hidden accept="audio/*">
+      <input type="file" id="docInput" hidden accept=".pdf,.txt,.doc,.docx">
+
+      <button onclick="audioInput.click()">🎤</button>
+      <button onclick="docInput.click()">📄</button>
+
+      <input id="textInput" placeholder="Send a message..." />
+      <button onclick="sendText()">➤</button>
+    </div>
+  </div>
+
+</div>
+<script src="js/chat.js"></script>
+<script src="js/mic.js"></script>
+
+</body>
+</html>

@@ -1,0 +1,99 @@
+from fastapi import FastAPI, Request
+from fastapi.responses import StreamingResponse
+import numpy as np
+import tempfile
+import subprocess
+import requests
+from faster_whisper import WhisperModel
+from app.memory import ShaktiMemory
+
+app = FastAPI()
+
+# ---------- MODELS ----------
+whisper = WhisperModel("base", device="cpu", compute_type="int8")
+memory = ShaktiMemory()
+
+OLLAMA_URL = "http://localhost:11434"
+OLLAMA_MODEL = "mistral"
+
+PIPER_BIN = "/home/ubuntu/piper/piper"
+PIPER_MODEL = "/home/ubuntu/piper/en_US-lessac-medium.onnx"
+
+# ---------- HELPERS ----------
+def ask_ollama(prompt: str) -> str:
+    r = requests.post(
+        "http://localhost:11434/api/chat",
+        json={
+            "model": "llama3",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a voice assistant. "
+                        "Respond clearly and briefly in 2–4 sentences."
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "stream": True
+        },
+        timeout=300
+    )
+
+    r.raise_for_status()
+    return r.json()["message"]["content"].strip()
+
+# ---------- API ----------
+@app.post("/process")
+async def process_audio(request: Request):
+    raw = await request.body()
+
+    # Convert raw float32 PCM
+    audio = np.frombuffer(raw, dtype=np.float32)
+
+    # ---- STT ----
+    segments, _ = whisper.transcribe(audio)
+    user_text = " ".join(seg.text for seg in segments).strip()
+
+    memory.add("user", user_text)
+
+    # ---- Build Messages ----
+    messages = [
+        {
+            "role": "system",
+            "content": "You are a voice assistant. Respond clearly and briefly in 2–4 sentences."
+        }
+    ]
+
+    for role, content in memory.get_recent():
+        messages.append({"role": role, "content": content})
+
+    messages.append({"role": "user", "content": user_text})
+
+    # ---- LLM (Streaming) ----
+    reply = ask_ollama_stream(messages)
+
+    memory.add("assistant", reply)
+
+    # ---- TTS ----
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        subprocess.run(
+            [
+                PIPER_BIN,
+                "--model", PIPER_MODEL,
+                "--output_file", f.name
+            ],
+            input=reply,
+            text=True
+        )
+
+        with open(f.name, "rb") as audio_file:
+            audio_bytes = audio_file.read()
+
+    return StreamingResponse(
+        io.BytesIO(audio_bytes),
+        media_type="audio/wav"
+    )
